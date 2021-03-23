@@ -1,0 +1,5 @@
+env/
+env-win/
+.vscode/
+hmm.db
+env3.6/

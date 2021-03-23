@@ -3,33 +3,93 @@ import altair as alt
 import math
 import pandas as pd
 import streamlit as st
+import sqlite3
+import requests
 
 """
-# Welcome to Streamlit!
-Edit `/streamlit_app.py` to customize this app to your heart's desire :heart:
-If you have any questions, checkout our [documentation](https://docs.streamlit.io) and [community
-forums](https://discuss.streamlit.io).
-In the meantime, below is an example of what you can do with just a few lines of code:
+# hmmmmmm
+Contains data about bets on upcoming matches this week.
+Refresh to see new bets.
 """
 
+def get_all_upcoming() -> list:
+    c = sqlite3.connect("hmm.db")
+    c.row_factory = sqlite3.Row
+    curr = c.cursor()
+    query = """
+    SELECT * FROM 
+        (SELECT * FROM `Matches` WHERE (called=0 OR called="False") AND DateScheduled > DateTime('now')) Matches 
+        LEFT JOIN `Bets`
+    ON 
+        Bets.week = Matches.week AND 
+        Bets.HomeTeam = Matches.HomeTeam AND 
+        Bets.AwayTeam = Matches.AwayTeam
+    ORDER BY `time`;
+    """
+    curr.execute(query)
+    ret = curr.fetchall()
+    c.close()
 
-with st.echo(code_location='below'):
-    total_points = st.slider("Number of points in spiral", 1, 5000, 2000)
-    num_turns = st.slider("Number of turns in spiral", 1, 100, 9)
+    all_bets = [dict(b) for b in ret]
 
-    Point = namedtuple('Point', 'x y')
-    data = []
+    return all_bets
 
-    points_per_turn = total_points / num_turns
 
-    for curr_point_num in range(total_points):
-        curr_turn, i = divmod(curr_point_num, points_per_turn)
-        angle = (curr_turn + 1) * 2 * math.pi * i / points_per_turn
-        radius = curr_point_num / total_points
-        x = radius * math.cos(angle)
-        y = radius * math.sin(angle)
-        data.append(Point(x, y))
+def get_all_upcoming_web() -> list:
+    r = requests.get('http://ntsfranz.crabdance.com/hmm/all_upcoming')
+    return r.json()
 
-    st.altair_chart(alt.Chart(pd.DataFrame(data), height=500, width=500)
-        .mark_circle(color='#0068c9', opacity=0.5)
-        .encode(x='x:Q', y='y:Q'))
+
+data_load_state = st.text('Loading data...')
+data = get_all_upcoming_web()
+data_load_state.text('Loading data...done!')
+
+df = pd.DataFrame(data)
+
+if len(df) == 0:
+    "No matches"
+else:
+
+    "Most bet-on matches"
+    grouped = df.groupby(['week', 'HomeTeam', 'AwayTeam']).agg({'DateScheduled': 'max','bet_amount': 'sum'})
+    grouped = grouped.sort_values('bet_amount', ascending=False)
+    grouped.columns = ["Date Scheduled", 'Total bet amount']
+    grouped = grouped.reset_index()
+    st.table(grouped)
+
+    "Most bet-on teams"
+    grouped_by_team = df.groupby(['week', 'HomeTeam', 'AwayTeam', 'bet_team']).agg({'bet_amount': 'sum'})
+    grouped_by_team = grouped_by_team.sort_values('bet_amount', ascending=False)
+    grouped_by_team.columns = ['Total bet amount']
+    grouped_by_team = grouped_by_team.reset_index()
+    st.table(grouped_by_team)
+
+
+    for index, match in grouped.iterrows():
+        match_bets = df[df['week'] == match['week']]
+        match_bets = match_bets[match_bets['HomeTeam']== match['HomeTeam']]
+        match_bets = match_bets[match_bets['AwayTeam']==match['AwayTeam']]
+        # st.table(match_bets)
+        home_cum_bet = 0
+        away_cum_bet = 0
+        total_cum_bet = 0
+        percentages = []
+        if len(match_bets) > 0:
+            for index, bet in match_bets.iterrows():
+                total_cum_bet += bet['bet_amount']
+                if bet['bet_team'] == bet['HomeTeam']:
+                    home_cum_bet += bet['bet_amount']
+                if bet['bet_team'] == bet['AwayTeam']:
+                    away_cum_bet += bet['bet_amount']
+                    
+                percentages.append({
+                    # 'time': bet['time'], 
+                    bet['HomeTeam']: home_cum_bet/total_cum_bet - .5,
+                    bet['AwayTeam']: away_cum_bet/total_cum_bet - .5
+                    })
+
+
+            perc_df = pd.DataFrame(percentages)
+
+            bet["HomeTeam"] + " vs. " + bet["AwayTeam"]
+            st.area_chart(perc_df)
